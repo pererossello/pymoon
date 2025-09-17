@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pymoon"
+version = "0.1.0"
+description = "A package for moon and disk mask calculations."
+authors = [
+    { name="Pererossello" }
+]
+readme = "README.md"
+requires-python = ">=3.7"
+dependencies = [
+    "numpy"
+]
