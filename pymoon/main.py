@@ -63,12 +63,12 @@ def _model_lambert(mu0, mu, f, **kw):
 
 def _model_ls(mu0, mu, f, eps=1e-8, k=0.0, **kw):
     # Lommel–Seeliger: good for airless bodies like the Moon
-    return f * (mu0 / (mu0 + mu + eps))
+    return f * (mu * mu0 / (mu0 + mu + eps))
 
 
 def _model_ls_lambert(mu0, mu, f, k=0.4, eps=1e-8, **kw):
     # Blend of LS and Lambert; k in [0..1]
-    return f * ((1 - k) * (mu0 / (mu0 + mu + eps)) + k * mu0)
+    return f * ((1 - k) * (mu * mu0 / (mu0 + mu + eps)) + k * mu0)
 
 
 def _opposition_bump(s_vec, v_vec=(0, 0, 1), B0=0.5, sigma_deg=5.0):
@@ -163,9 +163,6 @@ def get_moon_mask(
     I = _MODEL_FUNCS[model](
         mu0, mu, f, k=k, eps=eps, s_vec=s, B0=B0, sigma_deg=sigma_deg
     )
-
-    if model != "visibility":
-        I *= mu
 
     # Outside disk → 0
     I = np.where(inside, I, 0.0).astype(dtype)
