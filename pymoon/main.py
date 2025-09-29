@@ -63,7 +63,7 @@ def _model_lambert(mu0, mu, f, **kw):
 
 def _model_ls(mu0, mu, f, eps=1e-8, k=0.0, **kw):
     # Lommel–Seeliger: good for airless bodies like the Moon
-    return f * ((mu0 / (mu0 + mu + eps)) * (1.0 - k) + k * mu0)
+    return f * (mu0 / (mu0 + mu + eps))
 
 
 def _model_ls_lambert(mu0, mu, f, k=0.4, eps=1e-8, **kw):
