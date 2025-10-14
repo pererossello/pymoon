@@ -1,6 +1,6 @@
 # pymoon/__init__.py
 
-from .main import get_moon_mask, get_disk_mask, rho_terminator, get_phi_star
+from .main import get_moon_mask
 from .config import (
     PATH_LROC_COLOR_4K,
     PATH_LROC_COLOR_2K,

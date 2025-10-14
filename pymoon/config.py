@@ -4,6 +4,7 @@ Contains physical parameters and hardcoded paths to data files.
 """
 
 import os
+import numpy as np
 
 # Get the package directory
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -23,6 +24,7 @@ PATH_LDEM_4 = os.path.join(DATA_DIR, "ldem_4.tif")
 R_MOON = 1737.4  # Moon radius in km
 R_SUN = 6.9634e5  # Sun radius in km
 D_MOON_SUN = 1.496e8  # Moon-Sun distance in km
+THETA_SUN = np.arctan(R_SUN / D_MOON_SUN)  # Sun angular radius in radians
 
 # Default parameters
 DEFAULT_MAX_STEPS = 50
