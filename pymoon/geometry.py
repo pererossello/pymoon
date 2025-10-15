@@ -1,4 +1,4 @@
-from typing import Union, Sequence
+from typing import Optional, Sequence, Union
 
 import numpy as np
 
@@ -105,21 +105,71 @@ def get_normals(dem: np.ndarray, R_M: float = R_MOON):
     return np.array([nx, ny, nz])
 
 
-def render_moon_face(tex: np.ndarray, obs_vec: Vector, out_px=800):
+def _parse_color(color: Union[str, Sequence[float]]) -> np.ndarray:
+    """
+    Convert a color specification to an RGBA uint8 array.
+    Accepts hex strings (#RRGGBB or #RRGGBBAA) or sequences of length 3 or 4
+    with range either 0-1 or 0-255.
+    """
+    if isinstance(color, str):
+        color = color.strip()
+        if color.startswith("#"):
+            color = color[1:]
+        if len(color) not in (6, 8):
+            raise ValueError("Hex color must be #RRGGBB or #RRGGBBAA.")
+        values = [int(color[i : i + 2], 16) for i in range(0, len(color), 2)]
+        if len(values) == 3:
+            values.append(255)
+        return np.array(values, dtype=np.uint8)
+
+    arr = np.asarray(color, dtype=float)
+    if arr.ndim != 1 or arr.size not in (3, 4):
+        raise ValueError("Color must be a sequence of 3 (RGB) or 4 (RGBA) values.")
+    if arr.max() <= 1.0:
+        arr = arr * 255.0
+    arr = np.clip(arr, 0.0, 255.0)
+    if arr.size == 3:
+        arr = np.concatenate([arr, [255.0]])
+    return arr.astype(np.uint8)
+
+
+def render_moon_face(
+    tex: Optional[np.ndarray],
+    mask: Optional[np.ndarray],
+    obs_vec: Vector,
+    out_px: int = 800,
+    mask_mode: str = "multiply",
+    outside_color: Optional[Union[str, Sequence[float]]] = None,
+    radius: float = 1.0,
+):
     """
     Render a disc image of a sphere textured with an equirectangular map for an
     arbitrary observer direction.
 
     Parameters
     ----------
-    tex : np.ndarray
-        Input texture (H, W, C) in equirectangular layout. Grayscale inputs are
-        expanded to RGB. Floating point arrays are assumed to be in [0, 1].
+    tex : np.ndarray or None
+        Input texture (H, W, C) or (H, W) in equirectangular layout. Grayscale
+        inputs are expanded to RGB. Floating point arrays are assumed to be in
+        [0, 1]. If ``None``, a neutral white texture is used.
+    mask : np.ndarray or None
+        Scalar mask of shape (H, W). When ``mask_mode='multiply'`` this modulates
+        the texture intensity; when ``'alpha'`` it drives the alpha channel;
+        ``'both'`` multiplies intensity and alpha simultaneously.
     obs_vec : array-like of length 3
         Observer direction in world coordinates. Must be non-zero. The vector is
         normalized internally and (0, 0, 1) reproduces the azimuth=0 view.
     out_px : int
         Output image size (square), in pixels.
+    mask_mode : {'multiply', 'alpha', 'both'}
+        Defines how the mask is applied.
+    outside_color : color-like, optional
+        When provided, the exterior of the disc is filled with this color and
+        the output is fully opaque. Accepts hex strings or RGB/RGBA sequences.
+        Not compatible with ``mask_mode`` values that modify alpha.
+    radius : float, optional
+        Relative radius of the rendered disc (1.0 fills the frame, 0.5 renders a
+        disc half the width/height). Must be in (0, 1].
 
     Returns
     -------
@@ -128,19 +178,53 @@ def render_moon_face(tex: np.ndarray, obs_vec: Vector, out_px=800):
         outside the visible disc.
     """
 
-    if tex.ndim == 2:
-        tex = np.stack([tex] * 3, axis=-1)  # grayscale to RGB
+    if tex is None and mask is None:
+        raise ValueError("Either tex or mask must be provided.")
 
-    if np.issubdtype(tex.dtype, np.floating):
-        tex_min = float(np.nanmin(tex))
-        tex_max = float(np.nanmax(tex))
-        if tex_max <= 1.0 + 1e-6:
-            tex = np.clip(tex, 0.0, 1.0)
-            tex = (tex * 255.0).round().astype(np.uint8)
+    tex_arr = None
+    if tex is not None:
+        tex_arr = np.asarray(tex)
+        if tex_arr.ndim == 2:
+            tex_arr = np.stack([tex_arr] * 3, axis=-1)
+        elif tex_arr.ndim == 3 and tex_arr.shape[-1] == 4:
+            tex_arr = tex_arr[..., :3]
+        if np.issubdtype(tex_arr.dtype, np.floating):
+            tex_max = float(np.nanmax(tex_arr)) if tex_arr.size else 1.0
+            if tex_max <= 1.0 + 1e-6:
+                tex_arr = np.clip(tex_arr, 0.0, 1.0)
+            else:
+                tex_arr = np.clip(tex_arr, 0.0, 255.0) / 255.0
         else:
-            tex = np.clip(tex, 0.0, 255.0).round().astype(np.uint8)
+            tex_arr = tex_arr.astype(np.float32) / 255.0
+        tex_arr = tex_arr.astype(np.float32)
 
-    h, w, _ = tex.shape
+    mask_arr = None
+    if mask is not None:
+        mask_arr = np.asarray(mask)
+        if mask_arr.ndim == 3:
+            mask_arr = mask_arr[..., 0]
+        mask_arr = mask_arr.astype(np.float32)
+        mask_max = float(np.nanmax(mask_arr)) if mask_arr.size else 1.0
+        if mask_max > 1.0 + 1e-6:
+            mask_arr /= 255.0
+        mask_arr = np.clip(mask_arr, 0.0, 1.0)
+
+    if tex_arr is None:
+        tex_arr = np.ones(mask_arr.shape + (3,), dtype=np.float32)
+
+    if mask_arr is None:
+        mask_arr = np.ones(tex_arr.shape[:2], dtype=np.float32)
+
+    if tex_arr.shape[:2] != mask_arr.shape:
+        raise ValueError("Texture and mask must share the same spatial dimensions.")
+
+    mask_mode = mask_mode.lower()
+    if mask_mode not in {"multiply", "alpha", "both"}:
+        raise ValueError("mask_mode must be 'multiply', 'alpha', or 'both'.")
+    if outside_color is not None and mask_mode != "multiply":
+        raise ValueError("outside_color requires mask_mode='multiply'.")
+
+    h, w = tex_arr.shape[:2]
 
     obs_vec = np.asarray(obs_vec, dtype=float)
     if obs_vec.shape != (3,):
@@ -170,7 +254,12 @@ def render_moon_face(tex: np.ndarray, obs_vec: Vector, out_px=800):
 
     # Build orthographic grid (x to the right, y up), unit disc
     N = out_px
-    y, x = np.linspace(1, -1, N), np.linspace(-1, 1, N)
+    radius = float(radius)
+    if not (0.0 < radius <= 1.0):
+        raise ValueError("radius must be in the range (0, 1].")
+
+    scale = 1.0 / radius
+    y, x = np.linspace(scale, -scale, N), np.linspace(-scale, scale, N)
     xx, yy = np.meshgrid(x, y)
     rr2 = xx**2 + yy**2
     visible = rr2 <= 1.0
@@ -199,11 +288,37 @@ def render_moon_face(tex: np.ndarray, obs_vec: Vector, out_px=800):
     ui = (u * w).astype(np.int64) % w
     vi = np.clip((v * h).astype(np.int64), 0, h - 1)
 
+    sampled_tex = np.zeros((N, N, 3), dtype=np.float32)
+    sampled_tex[visible] = tex_arr[vi[visible], ui[visible]]
+
+    sampled_mask = np.zeros((N, N), dtype=np.float32)
+    sampled_mask[visible] = mask_arr[vi[visible], ui[visible]]
+    sampled_mask = np.clip(sampled_mask, 0.0, 1.0)
+
+    if mask_mode in {"multiply", "both"}:
+        sampled_tex *= sampled_mask[..., None]
+
+    alpha = np.zeros((N, N), dtype=np.float32)
+    if mask_mode in {"alpha", "both"}:
+        alpha[visible] = sampled_mask[visible]
+    else:
+        alpha[visible] = 1.0
+
+    rgb_uint8 = np.clip(sampled_tex * 255.0, 0.0, 255.0).round().astype(np.uint8)
+    alpha_uint8 = np.clip(alpha * 255.0, 0.0, 255.0).round().astype(np.uint8)
+
     out = np.zeros((N, N, 4), dtype=np.uint8)
-    out[..., 3] = 0
-    out_rgb = out[..., :3]
-    out_rgb[visible] = tex[vi[visible], ui[visible]]
-    out[..., 3][visible] = 255
+
+    if outside_color is None:
+        out[..., :3] = rgb_uint8
+        out[..., 3] = alpha_uint8
+    else:
+        bg_rgba = _parse_color(outside_color)
+        out[:] = bg_rgba
+        out_rgb = out[..., :3]
+        out_alpha = out[..., 3]
+        out_rgb[visible] = rgb_uint8[visible]
+        out_alpha[visible] = alpha_uint8[visible]
+        out_alpha[~visible] = 255  # ensure background is fully opaque
 
     return out
-
