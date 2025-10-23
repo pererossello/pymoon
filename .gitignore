@@ -1,9 +1,10 @@
-notebooks
-files
+notebooks_old
+files_old
 pymoon_old
 notes.md 
 z_bin
 z_bin.py
+context.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

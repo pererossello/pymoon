@@ -38,10 +38,11 @@ def get_moon_mask(
     B0: float = 0.45,  # opposition bump amplitude
     sigma_deg: float = 5.0,  # opposition width (deg)
     shadow_max_steps: int = 10,
-    gamma_corr: float = 1.0,
+    gamma_corr: Union[float, None] = 1.0,
     mask_mode: str = "multiply",
     outside_color: Optional[Union[str, Sequence[float]]] = None,
     radius: float = 1.0,
+    return_mask=False, 
 ):
 
     # Load DEM
@@ -108,17 +109,22 @@ def get_moon_mask(
             n_flat = np.moveaxis(n_flat, 0, -1)  # shape (h, w, 3)
             mu0_flat = np.dot(n_flat, s)
             dark = mu0_flat <= 0.0
-            mask[dark] *= mask[dark] 
+            mask[dark] *= mu0_flat[dark]
 
 
     # Apply gamma correction
-    if gamma_corr != 1.0:
+    if gamma_corr is not None:
         mask = np.clip(mask, 0.0, 1.0) ** (1.0 / gamma_corr)
+
+
+    if return_mask:
+        return mask
 
     if moonmap is not None:
         # Load moon texture
         if isinstance(moonmap, str):
-            moon_tex = rasterio.open(moonmap).read(1).astype(float)
+            moon_tex = rasterio.open(moonmap).read([1, 2, 3]).astype(float)
+            moon_tex = np.moveaxis(moon_tex, 0, -1)  # shape (h, w, 3)
         elif isinstance(moonmap, np.ndarray):
             moon_tex = np.asarray(moonmap, float)
         else:

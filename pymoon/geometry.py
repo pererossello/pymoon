@@ -1,21 +1,30 @@
-from typing import Optional, Sequence, Union
+"""Geometry utilities for working with lunar DEMs and rotations."""
+
+from typing import Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-from .config import *
+from .config import R_MOON
 
 Vector = Union[np.ndarray, Sequence[float]]
 
 
-def get_3d_positions(r):
+
+
+def get_3d_positions(r: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Convert an absolute radius grid into Cartesian coordinates.
 
     Parameters
     ----------
     r : np.ndarray
-        Array of shape (h, w) containing the absolute radius in kilometers for each
-        latitude/longitude sample on the Moon.
+        Array of shape ``(H, W)`` containing the absolute radius in kilometres
+        for each latitude/longitude sample on the Moon.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray, np.ndarray]
+        Cartesian coordinate arrays ``(x, y, z)`` each with shape ``(H, W)``.
     """
 
     h, w = r.shape
@@ -38,15 +47,21 @@ def get_3d_positions(r):
     return x3d, y3d, z3d
 
 
-def get_normals(dem: np.ndarray, R_M: float = R_MOON):
+def get_normals(dem: np.ndarray, R_M: float = R_MOON) -> np.ndarray:
     """
-    Compute the surface normals of a digital elevation model (DEM) of the Moon.
-    Parameters:
-    -----------
-    dem : ndarray (h, w)
-        Digital elevation model in kilometers
-    R_M : float
-        Moon radius in km (default 1737.4)
+    Compute unit surface normals of a digital elevation model (DEM) of the Moon.
+
+    Parameters
+    ----------
+    dem : np.ndarray
+        Digital elevation model in kilometres, shape ``(H, W)``.
+    R_M : float, optional
+        Moon radius in kilometres (default ``R_MOON``).
+
+    Returns
+    -------
+    np.ndarray
+        Array of shape ``(3, H, W)`` containing the normalized surface normals.
     """
 
     # Absolute radius
@@ -141,7 +156,7 @@ def render_moon_face(
     mask_mode: str = "multiply",
     outside_color: Optional[Union[str, Sequence[float]]] = None,
     radius: float = 1.0,
-):
+) -> np.ndarray:
     """
     Render a disc image of a sphere textured with an equirectangular map for an
     arbitrary observer direction.
@@ -241,9 +256,10 @@ def render_moon_face(
         north = np.array([0.0, 0.0, 1.0])
 
     right = np.cross(north, forward)
+    
     right_norm = np.linalg.norm(right)
     if right_norm < 1e-8:
-        north = np.array([1.0, 0.0, 0.0])
+        north = np.array([0.0, 1.0, 0.0])
         right = np.cross(north, forward)
         right_norm = np.linalg.norm(right)
         if right_norm < 1e-8:
@@ -322,3 +338,96 @@ def render_moon_face(
         out_alpha[~visible] = 255  # ensure background is fully opaque
 
     return out
+
+
+
+# Rotation matrices
+#########################
+
+
+def get_R_x(theta: float) -> np.ndarray:
+    """Rotation matrix around the X axis by angle ``theta`` (radians)."""
+    return np.array(
+        [
+            [1, 0, 0],
+            [0, np.cos(theta), -np.sin(theta)],
+            [0, np.sin(theta), np.cos(theta)],
+        ]
+    )
+
+
+def get_R_y(theta: float) -> np.ndarray:
+    """Rotation matrix around the Y axis by angle ``theta`` (radians)."""
+    return np.array(
+        [
+            [np.cos(theta), 0, np.sin(theta)],
+            [0, 1, 0],
+            [-np.sin(theta), 0, np.cos(theta)],
+        ]
+    )
+
+
+def get_R_z(theta: float) -> np.ndarray:
+    """Rotation matrix around the Z axis by angle ``theta`` (radians)."""
+    return np.array(
+        [
+            [np.cos(theta), -np.sin(theta), 0],
+            [np.sin(theta), np.cos(theta), 0],
+            [0, 0, 1],
+        ]
+    )
+
+
+
+def rotate_vector_rodrigues(
+    vector: Vector,
+    angle: Union[float, np.ndarray],
+    ref_vector: Vector,
+    *,
+    degrees: bool = False,
+) -> np.ndarray:
+    """
+    Rotate a vector (or batch of vectors) about ``ref_vector`` using Rodrigues' formula.
+
+    Parameters
+    ----------
+    vector : array-like
+        Vector(s) to rotate. Trailing dimension must be 3.
+    angle : float or np.ndarray
+        Rotation angle(s). Interpreted as radians unless ``degrees=True``.
+    ref_vector : array-like
+        Axis about which to rotate. Need not be unit length.
+    degrees : bool, optional
+        Treat ``angle`` as degrees instead of radians.
+
+    Returns
+    -------
+    np.ndarray
+        Rotated vector(s) with the same shape as ``vector``.
+    """
+    v = np.asarray(vector, dtype=float)
+    if v.shape[-1] != 3:
+        raise ValueError("vector must have a trailing dimension of length 3.")
+
+    k = np.asarray(ref_vector, dtype=float)
+    if k.shape != (3,):
+        raise ValueError("ref_vector must be a 3-element vector.")
+
+    kn = np.linalg.norm(k)
+    if not np.isfinite(kn) or kn < 1e-15:
+        raise ValueError("ref_vector must be non-zero and not tiny.")
+    k = k / kn
+
+    theta = np.asarray(angle, dtype=float)
+    if degrees:
+        theta = np.deg2rad(theta)
+    # optional, avoids catastrophic trig for absurd magnitudes:
+    theta = np.remainder(theta, 2 * np.pi)
+
+    cos_theta = np.cos(theta)[..., None]
+    sin_theta = np.sin(theta)[..., None]
+
+    cross_term = np.cross(k, v)  # (..., 3)
+    dot_scalar = np.sum(v * k, axis=-1, keepdims=True)  # (..., 1)
+
+    return v * cos_theta + cross_term * sin_theta + k * dot_scalar * (1.0 - cos_theta)
